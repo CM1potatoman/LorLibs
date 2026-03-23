@@ -187,18 +187,47 @@ end
 -- ══════════════════════════════════════════════════
 -- ROOT GUI
 -- ══════════════════════════════════════════════════
+local function randomString(len)
+    local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    local s = ""
+    for i = 1, len do
+        local r = math.random(1, #chars)
+        s = s .. chars:sub(r, r)
+    end
+    return s
+end
+
 local gui = new("ScreenGui", {
-    Name           = "LoRUI",
+    Name           = randomString(12),  -- random name every load
     ResetOnSpawn   = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     DisplayOrder   = 999,
+    IgnoreGuiInset = true,
 })
+
+-- always try gethui first (Velocity), never fall back to PlayerGui
+local guiParented = false
 pcall(function()
-    if syn and syn.protect_gui then syn.protect_gui(gui); gui.Parent = game:GetService("CoreGui")
-    elseif gethui then gui.Parent = gethui()
-    else gui.Parent = LP:FindFirstChildOfClass("PlayerGui") end
+    if gethui then
+        gui.Parent = gethui()
+        guiParented = true
+    end
 end)
-if not gui.Parent then gui.Parent = LP:FindFirstChildOfClass("PlayerGui") end
+if not guiParented then
+    pcall(function()
+        if syn and syn.protect_gui then
+            syn.protect_gui(gui)
+            gui.Parent = game:GetService("CoreGui")
+            guiParented = true
+        end
+    end)
+end
+if not guiParented then
+    pcall(function()
+        gui.Parent = game:GetService("CoreGui")
+        guiParented = true
+    end)
+end
 
 -- ══════════════════════════════════════════════════
 -- NOTIFICATIONS
@@ -322,7 +351,7 @@ function LoRUI:CreateWindow(cfg)
 
     -- ── MAIN ────────────────────────────────────
     local Main = new("Frame", {
-        Name             = "LoRUI_Main",
+        Name             = "Frame",
         Size             = UDim2.new(0, W_WIDTH, 0, W_HEIGHT),
         Position         = UDim2.new(0.5,-W_WIDTH/2, 0.5,-W_HEIGHT/2),
         BackgroundColor3 = T.BG,
