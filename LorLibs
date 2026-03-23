@@ -425,21 +425,26 @@ function LoRUI:CreateWindow(cfg)
         tw(Main, {Size = minimized and miniH or fullH}, ANIM2)
     end)
 
-    -- drag
+    -- drag using Mouse object — more reliable than UIS in executors
+    local Mouse = LP:GetMouse()
     TBar.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging=true; dragStart=inp.Position; startPos=Main.Position
+            dragging  = true
+            dragStart = Vector2.new(Mouse.X, Mouse.Y)
+            startPos  = Main.Position
         end
     end)
-    UIS.InputChanged:Connect(function(inp)
-        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
-            local d = inp.Position - dragStart
-            Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X,
-                                      startPos.Y.Scale, startPos.Y.Offset+d.Y)
+    TBar.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
         end
     end)
-    UIS.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging=false end
+    Mouse.Move:Connect(function()
+        if not dragging then return end
+        local delta = Vector2.new(Mouse.X, Mouse.Y) - dragStart
+        Main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end)
 
     UIS.InputBegan:Connect(function(inp, gp)
@@ -510,14 +515,15 @@ function LoRUI:CreateWindow(cfg)
                 BackgroundColor3=T.DIVIDER, BorderSizePixel=0, ZIndex=12,
             }, S)
             local stamp = new("Frame", {
-                Size=UDim2.new(0,0,0,18), AnchorPoint=Vector2.new(0.5,0),
-                Position=UDim2.new(0.5,0,0.5,-9), AutomaticSize=Enum.AutomaticSize.X,
+                Size=UDim2.new(0, #title*7+20, 0, 18),
+                AnchorPoint=Vector2.new(0.5,0),
+                Position=UDim2.new(0.5,0,0.5,-9),
                 BackgroundColor3=T.BG, BorderSizePixel=0, ZIndex=13,
             }, S)
             stroke(stamp, T.BORDER_DIM, 1)
             pad(stamp, 1, 8, 1, 8)
             new("TextLabel", {
-                Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+                Size=UDim2.new(1,0,1,0),
                 BackgroundTransparency=1, Text=string.upper(title),
                 TextColor3=T.TEXT_GOLD, Font=Enum.Font.GothamBold,
                 TextSize=9, TextTracking=4, ZIndex=14,
@@ -528,7 +534,7 @@ function LoRUI:CreateWindow(cfg)
         -- LABEL
         function Tab:CreateLabel(text)
             new("TextLabel", {
-                Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+                Size=UDim2.new(1,0,0,16),
                 BackgroundTransparency=1, Text=text, TextColor3=T.TEXT_DIM,
                 Font=Enum.Font.Gotham, TextSize=10, TextWrapped=true,
                 TextXAlignment=Enum.TextXAlignment.Left,
@@ -540,7 +546,7 @@ function LoRUI:CreateWindow(cfg)
         -- PARAGRAPH
         function Tab:CreateParagraph(cfg)
             local P = new("Frame", {
-                Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+                Size=UDim2.new(1,0,0,60),
                 BackgroundColor3=T.BG2, BorderSizePixel=0,
                 LayoutOrder=o(), ZIndex=12,
             }, EList)
@@ -1056,21 +1062,22 @@ function LoRUI:CreateWindow(cfg)
     local function makeTab(name)
         tabCount = tabCount + 1
         local idx = tabCount
+        -- fixed width based on text length — AutomaticSize unreliable in executors
+        local tabW = math.max(50, #name * 7 + 20)
 
         local tBtn = new("TextButton", {
-            Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+            Size=UDim2.new(0,tabW,1,0),
             BackgroundColor3=T.BG_TAB, BorderSizePixel=0,
             Text="", AutoButtonColor=false, LayoutOrder=idx, ZIndex=12,
         }, TabBarList)
         stroke(tBtn, T.BORDER_DIM, 1)
 
         local tLbl = new("TextLabel", {
-            Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+            Size=UDim2.new(1,0,1,0),
             BackgroundTransparency=1, Text=string.upper(name),
             TextColor3=T.TEXT_DIM, Font=Enum.Font.GothamBold,
             TextSize=9, TextTracking=3, ZIndex=13,
         }, tBtn)
-        pad(tLbl, 0, 10, 0, 10)
 
         local tLine = new("Frame", {
             Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2),
