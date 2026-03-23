@@ -1,0 +1,1126 @@
+-- ╔══════════════════════════════════════════════════╗
+-- ║  LoRUI v4  —  Library of Ruina UI Library       ║
+-- ║  Portrait layout, top tabs, LoR accurate        ║
+-- ║  Optimized — single global input handlers       ║
+-- ║  Rayfield + Orion compatible API                ║
+-- ╚══════════════════════════════════════════════════╝
+
+local LoRUI = {}
+LoRUI.Flags = {}
+
+local TS      = game:GetService("TweenService")
+local UIS     = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local LP      = Players.LocalPlayer
+
+-- ══════════════════════════════════════════════════
+-- THEME
+-- ══════════════════════════════════════════════════
+local T = {
+    BG         = Color3.fromRGB(14,  11,  10),
+    BG2        = Color3.fromRGB(20,  16,  14),
+    BG3        = Color3.fromRGB(28,  22,  19),
+    BG4        = Color3.fromRGB(36,  28,  24),
+    BG_TAB     = Color3.fromRGB(10,  8,   7 ),
+    BG_TAB_ACT = Color3.fromRGB(22,  17,  15),
+    BORDER     = Color3.fromRGB(90,  72,  45),
+    BORDER_LIT = Color3.fromRGB(160, 128, 70),
+    BORDER_DIM = Color3.fromRGB(45,  36,  22),
+    TEXT       = Color3.fromRGB(212, 197, 168),
+    TEXT_DIM   = Color3.fromRGB(120, 108, 88),
+    TEXT_GOLD  = Color3.fromRGB(190, 155, 75),
+    TEXT_HEAD  = Color3.fromRGB(230, 215, 185),
+    ACCENT     = Color3.fromRGB(130, 95,  40),
+    ACCENT_RED = Color3.fromRGB(120, 25,  25),
+    DIVIDER    = Color3.fromRGB(55,  44,  28),
+    ON         = Color3.fromRGB(100, 20,  20),
+    OFF        = Color3.fromRGB(30,  24,  20),
+}
+
+local ANIM  = TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local ANIM2 = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local W_WIDTH  = 300
+local W_HEIGHT = 520
+local TAB_H    = 28
+local TITLE_H  = 36
+
+-- ══════════════════════════════════════════════════
+-- GLOBAL INPUT STATE
+-- Single handlers shared across ALL sliders/colorpickers
+-- ══════════════════════════════════════════════════
+local activeSlider = nil  -- {track, fill, handle, min, max, inc, suf, valLbl, flag, cb}
+local activeCP     = nil  -- {track, fill, handle, onChange}
+
+UIS.InputChanged:Connect(function(inp)
+    if inp.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+    if activeSlider then
+        local s = activeSlider
+        local ax = s.track.AbsolutePosition.X
+        local aw = s.track.AbsoluteSize.X
+        local p  = math.clamp((inp.Position.X - ax) / aw, 0, 1)
+        local raw = s.min + (s.max - s.min) * p
+        local v  = math.clamp(math.floor(raw / s.inc + 0.5) * s.inc, s.min, s.max)
+        v = math.floor(v * 100000 + 0.5) / 100000
+        s.val[1] = v
+        local fp = (v - s.min) / (s.max - s.min)
+        s.fill.Size       = UDim2.new(fp, 0, 1, 0)
+        s.handle.Position = UDim2.new(fp, 0, 0.5, 0)
+        s.valLbl.Text     = tostring(v) .. s.suf
+        if s.flag then LoRUI.Flags[s.flag] = LoRUI.Flags[s.flag] or {}; LoRUI.Flags[s.flag].Value = v end
+        if s.cb then pcall(s.cb, v) end
+    end
+    if activeCP then
+        local c = activeCP
+        local ax = c.track.AbsolutePosition.X
+        local aw = c.track.AbsoluteSize.X
+        local p  = math.clamp((inp.Position.X - ax) / aw, 0, 1)
+        c.fill.Size       = UDim2.new(p, 0, 1, 0)
+        c.handle.Position = UDim2.new(p, 0, 0.5, 0)
+        c.onChange(math.floor(p * 255))
+    end
+end)
+
+UIS.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+        activeSlider = nil
+        activeCP     = nil
+    end
+end)
+
+-- ══════════════════════════════════════════════════
+-- UTIL
+-- ══════════════════════════════════════════════════
+local function new(cls, props, parent)
+    local i = Instance.new(cls)
+    for k, v in pairs(props or {}) do i[k] = v end
+    if parent then i.Parent = parent end
+    return i
+end
+
+local function tw(obj, props, info)
+    if not obj or not obj.Parent then return end
+    TS:Create(obj, info or ANIM, props):Play()
+end
+
+local function stroke(parent, col, thick)
+    return new("UIStroke", {
+        Color           = col   or T.BORDER,
+        Thickness       = thick or 1,
+        LineJoinMode    = Enum.LineJoinMode.Miter,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, parent)
+end
+
+local function listLayout(parent, padding)
+    return new("UIListLayout", {
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding   = UDim.new(0, padding or 0),
+    }, parent)
+end
+
+local function pad(parent, t, r, b, l)
+    return new("UIPadding", {
+        PaddingTop    = UDim.new(0, t or 6),
+        PaddingRight  = UDim.new(0, r or 8),
+        PaddingBottom = UDim.new(0, b or 6),
+        PaddingLeft   = UDim.new(0, l or 8),
+    }, parent)
+end
+
+-- LoR corner clip — uses UIGradient to fake diagonal cut, zero extra frames
+-- Applies a transparent triangle mask in the corner via ImageLabel
+local function clipCorners(frame, size)
+    size = size or 6
+    -- Use a single Frame overlay in each corner with a rotated gradient
+    -- This is much cheaper than spawning Frame + child Frame per corner
+    local corners = {"TL","TR","BL","BR"}
+    local positions = {
+        TL = UDim2.new(0,0,0,0),
+        TR = UDim2.new(1,-size,0,0),
+        BL = UDim2.new(0,0,1,-size),
+        BR = UDim2.new(1,-size,1,-size),
+    }
+    local rotations = {TL=45, TR=-45, BL=-45, BR=45}
+
+    for _, c in ipairs(corners) do
+        local clip = new("Frame", {
+            Size             = UDim2.new(0, size, 0, size),
+            Position         = positions[c],
+            BackgroundColor3 = T.BG,
+            BorderSizePixel  = 0,
+            ZIndex           = (frame.ZIndex or 1) + 3,
+        }, frame)
+        -- diagonal line
+        new("Frame", {
+            Size             = UDim2.new(0, size * 1.5, 0, 1),
+            AnchorPoint      = Vector2.new(0.5, 0.5),
+            Position         = UDim2.new(0.5, 0, 0.5, 0),
+            Rotation         = rotations[c],
+            BackgroundColor3 = T.BORDER_DIM,
+            BorderSizePixel  = 0,
+            ZIndex           = (frame.ZIndex or 1) + 4,
+        }, clip)
+    end
+end
+
+local function safePcall(f, ...) pcall(f, ...) end
+
+-- config helpers
+local cfgFolder = "LoRUI"
+local HS = game:GetService("HttpService")
+
+local function readCfg(name)
+    if not isfile then return nil end
+    local path = cfgFolder.."/"..name..".json"
+    if not isfile(path) then return nil end
+    local ok, d = pcall(function() return HS:JSONDecode(readfile(path)) end)
+    return ok and d or nil
+end
+
+local function writeCfg(name, data)
+    if not writefile then return end
+    if not isfolder(cfgFolder) then makefolder(cfgFolder) end
+    pcall(function() writefile(cfgFolder.."/"..name..".json", HS:JSONEncode(data)) end)
+end
+
+-- ══════════════════════════════════════════════════
+-- ROOT GUI
+-- ══════════════════════════════════════════════════
+local gui = new("ScreenGui", {
+    Name           = "LoRUI",
+    ResetOnSpawn   = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    DisplayOrder   = 999,
+})
+pcall(function()
+    if syn and syn.protect_gui then syn.protect_gui(gui); gui.Parent = game:GetService("CoreGui")
+    elseif gethui then gui.Parent = gethui()
+    else gui.Parent = LP:FindFirstChildOfClass("PlayerGui") end
+end)
+if not gui.Parent then gui.Parent = LP:FindFirstChildOfClass("PlayerGui") end
+
+-- ══════════════════════════════════════════════════
+-- NOTIFICATIONS
+-- ══════════════════════════════════════════════════
+local notifCount = 0
+
+local function makeNotif(cfg)
+    local title    = cfg.Name or cfg.Title or "NOTICE"
+    local content  = cfg.Content or cfg.Text or ""
+    local duration = cfg.Time or cfg.Duration or 3
+    local yOff     = -(notifCount * 72 + 10)
+    notifCount     = notifCount + 1
+
+    local N = new("Frame", {
+        Size             = UDim2.new(0, 260, 0, 62),
+        Position         = UDim2.new(1, 270, 1, yOff),
+        BackgroundColor3 = T.BG2,
+        BorderSizePixel  = 0,
+        ZIndex           = 200,
+    }, gui)
+    stroke(N, T.BORDER_LIT, 1)
+    clipCorners(N, 6)
+
+    new("Frame", {
+        Size             = UDim2.new(0, 3, 1, 0),
+        BackgroundColor3 = T.ACCENT_RED,
+        BorderSizePixel  = 0,
+        ZIndex           = 201,
+    }, N)
+
+    new("TextLabel", {
+        Size             = UDim2.new(1,-14,0,22),
+        Position         = UDim2.new(0,10,0,6),
+        BackgroundTransparency = 1,
+        Text             = string.upper(title),
+        TextColor3       = T.TEXT_GOLD,
+        Font             = Enum.Font.GothamBold,
+        TextSize         = 10,
+        TextTracking     = 4,
+        TextXAlignment   = Enum.TextXAlignment.Left,
+        ZIndex           = 201,
+    }, N)
+
+    new("TextLabel", {
+        Size             = UDim2.new(1,-14,0,28),
+        Position         = UDim2.new(0,10,0,28),
+        BackgroundTransparency = 1,
+        Text             = content,
+        TextColor3       = T.TEXT_DIM,
+        Font             = Enum.Font.Gotham,
+        TextSize         = 10,
+        TextWrapped      = true,
+        TextXAlignment   = Enum.TextXAlignment.Left,
+        ZIndex           = 201,
+    }, N)
+
+    tw(N, {Position = UDim2.new(1,-270,1,yOff)}, ANIM2)
+    task.delay(duration, function()
+        tw(N, {Position = UDim2.new(1,270,1,yOff)}, ANIM2)
+        task.wait(0.3)
+        notifCount = math.max(0, notifCount - 1)
+        N:Destroy()
+    end)
+end
+
+function LoRUI:Notify(cfg)           makeNotif(cfg) end
+function LoRUI:MakeNotification(cfg) makeNotif(cfg) end
+
+-- ══════════════════════════════════════════════════
+-- ELEMENT ROW FACTORY
+-- Shared base frame builder to avoid repeating 15 lines per element
+-- ══════════════════════════════════════════════════
+local function makeRow(parent, ord, h)
+    local row = new("Frame", {
+        Size             = UDim2.new(1, 0, 0, h or 32),
+        BackgroundColor3 = T.BG3,
+        BorderSizePixel  = 0,
+        LayoutOrder      = ord,
+        ZIndex           = 12,
+    }, parent)
+    stroke(row, T.BORDER_DIM, 1)
+    clipCorners(row, 5)
+    -- left bar
+    new("Frame", {
+        Size             = UDim2.new(0, 3, 1, 0),
+        BackgroundColor3 = T.BORDER,
+        BorderSizePixel  = 0,
+        ZIndex           = 13,
+    }, row)
+    return row
+end
+
+local function makeLabel(parent, text, x, y, w, h, col, font, size, tracking, align, zidx)
+    return new("TextLabel", {
+        Size             = UDim2.new(w or 1, 0, 0, h or 0),
+        Position         = UDim2.new(x or 0, 0, y or 0, 0),
+        AutomaticSize    = (h == nil) and Enum.AutomaticSize.Y or Enum.AutomaticSize.None,
+        BackgroundTransparency = 1,
+        Text             = text or "",
+        TextColor3       = col or T.TEXT,
+        Font             = font or Enum.Font.Gotham,
+        TextSize         = size or 11,
+        TextTracking     = tracking or 0,
+        TextXAlignment   = align or Enum.TextXAlignment.Left,
+        TextWrapped      = true,
+        ZIndex           = zidx or 13,
+    }, parent)
+end
+
+-- ══════════════════════════════════════════════════
+-- CREATE WINDOW
+-- ══════════════════════════════════════════════════
+function LoRUI:CreateWindow(cfg)
+    local Window    = {}
+    local activeTab = nil
+    local tabCount  = 0
+    local cfgName   = (cfg.ConfigurationSaving and cfg.ConfigurationSaving.FileName) or "config"
+    local saveOn    = (cfg.ConfigurationSaving and cfg.ConfigurationSaving.Enabled) or false
+    local minimized = false
+    local dragging, dragStart, startPos = false, nil, nil
+
+    -- ── MAIN ────────────────────────────────────
+    local Main = new("Frame", {
+        Name             = "LoRUI_Main",
+        Size             = UDim2.new(0, W_WIDTH, 0, 0),
+        Position         = UDim2.new(0.5,-W_WIDTH/2, 0.5,-W_HEIGHT/2),
+        BackgroundColor3 = T.BG,
+        BorderSizePixel  = 0,
+        ClipsDescendants = true,
+        ZIndex           = 10,
+    }, gui)
+    stroke(Main, T.BORDER, 1)
+    clipCorners(Main, 10)
+
+    -- ── TITLE BAR ───────────────────────────────
+    local TBar = new("Frame", {
+        Size             = UDim2.new(1, 0, 0, TITLE_H),
+        BackgroundColor3 = T.BG2,
+        BorderSizePixel  = 0,
+        ZIndex           = 11,
+    }, Main)
+    stroke(TBar, T.BORDER_DIM, 1)
+
+    new("Frame", {
+        Size             = UDim2.new(0, 4, 1, 0),
+        BackgroundColor3 = T.ACCENT,
+        BorderSizePixel  = 0,
+        ZIndex           = 12,
+    }, TBar)
+
+    makeLabel(TBar, string.upper(cfg.Name or "LIBRARY"), 0, 0, 1, TITLE_H,
+        T.TEXT_HEAD, Enum.Font.GothamBold, 12, 6, Enum.TextXAlignment.Left, 12)
+    -- fix position offset for left bar
+    do
+        local lbl = TBar:FindFirstChildOfClass("TextLabel")
+        if lbl then lbl.Position = UDim2.new(0, 14, 0, 0) end
+    end
+
+    if cfg.LoadingSubtitle then
+        local sub = makeLabel(TBar, cfg.LoadingSubtitle, 0, 0, 1, TITLE_H,
+            T.TEXT_DIM, Enum.Font.RobotoMono, 8, 2, Enum.TextXAlignment.Right, 12)
+        sub.Position = UDim2.new(0, 0, 0, 0)
+        sub.Size     = UDim2.new(1, -68, 1, 0)
+    end
+
+    -- window buttons (shared hover handler inline to avoid per-button closures)
+    local function winBtn(xOff, text, cb2)
+        local b = new("TextButton", {
+            Size             = UDim2.new(0, 28, 0, 20),
+            Position         = UDim2.new(1, xOff, 0.5, -10),
+            BackgroundColor3 = T.BG3,
+            BorderSizePixel  = 0,
+            Text             = text,
+            TextColor3       = T.TEXT_DIM,
+            Font             = Enum.Font.GothamBold,
+            TextSize         = 9,
+            AutoButtonColor  = false,
+            ZIndex           = 13,
+        }, TBar)
+        stroke(b, T.BORDER_DIM, 1)
+        b.MouseEnter:Connect(function()  tw(b,{BackgroundColor3=T.BG4}) end)
+        b.MouseLeave:Connect(function()  tw(b,{BackgroundColor3=T.BG3}) end)
+        b.MouseButton1Click:Connect(cb2)
+        return b
+    end
+
+    local fullH = UDim2.new(0, W_WIDTH, 0, W_HEIGHT)
+    local miniH = UDim2.new(0, W_WIDTH, 0, TITLE_H + TAB_H)
+
+    winBtn(-32, "✕", function()
+        tw(Main, {Size = UDim2.new(0,W_WIDTH,0,TITLE_H)}, ANIM2)
+    end)
+    winBtn(-62, "─", function()
+        minimized = not minimized
+        tw(Main, {Size = minimized and miniH or fullH}, ANIM2)
+    end)
+
+    -- drag
+    TBar.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging=true; dragStart=inp.Position; startPos=Main.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = inp.Position - dragStart
+            Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X,
+                                      startPos.Y.Scale, startPos.Y.Offset+d.Y)
+        end
+    end)
+    UIS.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging=false end
+    end)
+
+    UIS.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        if inp.KeyCode == Enum.KeyCode.K then
+            minimized = not minimized
+            tw(Main, {Size = minimized and miniH or fullH}, ANIM2)
+        end
+    end)
+
+    -- ── TAB BAR (top) ───────────────────────────
+    local TabBarFrame = new("Frame", {
+        Size             = UDim2.new(1, 0, 0, TAB_H),
+        Position         = UDim2.new(0, 0, 0, TITLE_H),
+        BackgroundColor3 = T.BG_TAB,
+        BorderSizePixel  = 0,
+        ClipsDescendants = true,
+        ZIndex           = 11,
+    }, Main)
+    stroke(TabBarFrame, T.BORDER_DIM, 1)
+
+    local TabBarList = new("Frame", {
+        Size             = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        ZIndex           = 12,
+    }, TabBarFrame)
+    new("UIListLayout", {
+        SortOrder     = Enum.SortOrder.LayoutOrder,
+        FillDirection = Enum.FillDirection.Horizontal,
+        Padding       = UDim.new(0, 0),
+    }, TabBarList)
+
+    -- ── CONTENT AREA ────────────────────────────
+    local ContentBG = new("Frame", {
+        Size             = UDim2.new(1, 0, 1, -(TITLE_H + TAB_H + 18)),
+        Position         = UDim2.new(0, 0, 0, TITLE_H + TAB_H),
+        BackgroundColor3 = T.BG,
+        BorderSizePixel  = 0,
+        ClipsDescendants = true,
+        ZIndex           = 10,
+    }, Main)
+
+    -- ── BOTTOM BAR ──────────────────────────────
+    new("Frame", {
+        Size             = UDim2.new(1, 0, 0, 18),
+        Position         = UDim2.new(0, 0, 1, -18),
+        BackgroundColor3 = T.BG2,
+        BorderSizePixel  = 0,
+        ZIndex           = 11,
+    }, Main)
+
+    -- ══════════════════════════════════════════
+    -- ELEMENT BUILDERS (shared across all tabs)
+    -- ══════════════════════════════════════════
+    local function buildElements(EList)
+        local Tab    = {}
+        local elemOrd = 0
+        local function o() elemOrd=elemOrd+1; return elemOrd end
+
+        -- SECTION
+        function Tab:CreateSection(title)
+            local S = new("Frame", {
+                Size=UDim2.new(1,0,0,26), BackgroundTransparency=1,
+                LayoutOrder=o(), ZIndex=12,
+            }, EList)
+            new("Frame", {
+                Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,0.5,0),
+                BackgroundColor3=T.DIVIDER, BorderSizePixel=0, ZIndex=12,
+            }, S)
+            local stamp = new("Frame", {
+                Size=UDim2.new(0,0,0,18), AnchorPoint=Vector2.new(0.5,0),
+                Position=UDim2.new(0.5,0,0.5,-9), AutomaticSize=Enum.AutomaticSize.X,
+                BackgroundColor3=T.BG, BorderSizePixel=0, ZIndex=13,
+            }, S)
+            stroke(stamp, T.BORDER_DIM, 1)
+            pad(stamp, 1, 8, 1, 8)
+            new("TextLabel", {
+                Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+                BackgroundTransparency=1, Text=string.upper(title),
+                TextColor3=T.TEXT_GOLD, Font=Enum.Font.GothamBold,
+                TextSize=9, TextTracking=4, ZIndex=14,
+            }, stamp)
+        end
+        Tab.AddSection = Tab.CreateSection
+
+        -- LABEL
+        function Tab:CreateLabel(text)
+            new("TextLabel", {
+                Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+                BackgroundTransparency=1, Text=text, TextColor3=T.TEXT_DIM,
+                Font=Enum.Font.Gotham, TextSize=10, TextWrapped=true,
+                TextXAlignment=Enum.TextXAlignment.Left,
+                LayoutOrder=o(), ZIndex=12,
+            }, EList)
+        end
+        Tab.AddLabel = Tab.CreateLabel
+
+        -- PARAGRAPH
+        function Tab:CreateParagraph(cfg)
+            local P = new("Frame", {
+                Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+                BackgroundColor3=T.BG2, BorderSizePixel=0,
+                LayoutOrder=o(), ZIndex=12,
+            }, EList)
+            stroke(P, T.BORDER_DIM, 1)
+            clipCorners(P, 5)
+            local inner = new("Frame", {
+                Size=UDim2.new(1,-14,1,0), Position=UDim2.new(0,10,0,0),
+                AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, ZIndex=13,
+            }, P)
+            listLayout(inner, 3)
+            pad(inner, 6, 0, 6, 0)
+            new("TextLabel", {
+                Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+                BackgroundTransparency=1, Text=cfg.Title or "",
+                TextColor3=T.TEXT, Font=Enum.Font.GothamBold,
+                TextSize=11, TextWrapped=true,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
+            }, inner)
+            new("TextLabel", {
+                Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+                BackgroundTransparency=1, Text=cfg.Content or "",
+                TextColor3=T.TEXT_DIM, Font=Enum.Font.Gotham,
+                TextSize=10, TextWrapped=true,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
+            }, inner)
+        end
+        Tab.AddParagraph = Tab.CreateParagraph
+
+        -- TOGGLE
+        function Tab:CreateToggle(cfg)
+            local val  = cfg.CurrentValue or cfg.Default or false
+            local flag = cfg.Flag
+            local cb   = cfg.Callback
+            local row  = makeRow(EList, o(), 32)
+
+            local stateBar = new("Frame", {
+                Size=UDim2.new(0,3,1,0),
+                BackgroundColor3=val and T.ACCENT_RED or T.BORDER_DIM,
+                BorderSizePixel=0, ZIndex=13,
+            }, row)
+
+            new("TextLabel", {
+                Size=UDim2.new(1,-62,1,0), Position=UDim2.new(0,10,0,0),
+                BackgroundTransparency=1, Text=cfg.Name or "",
+                TextColor3=T.TEXT, Font=Enum.Font.Gotham, TextSize=11,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
+            }, row)
+
+            local sBtn = new("TextButton", {
+                Size=UDim2.new(0,46,0,20), Position=UDim2.new(1,-52,0.5,-10),
+                BackgroundColor3=val and T.ON or T.OFF,
+                BorderSizePixel=0,
+                Text=val and "◈ ON" or "◇ OFF",
+                TextColor3=val and T.TEXT_GOLD or T.TEXT_DIM,
+                Font=Enum.Font.GothamBold, TextSize=9, TextTracking=1,
+                AutoButtonColor=false, ZIndex=14,
+            }, row)
+            local sBtnStroke = stroke(sBtn, val and T.BORDER_LIT or T.BORDER_DIM, 1)
+
+            local Toggle = {Value=val}
+
+            local function setState(v, silent)
+                val=v; Toggle.Value=v
+                tw(sBtn,      {BackgroundColor3=v and T.ON  or T.OFF})
+                tw(stateBar,  {BackgroundColor3=v and T.ACCENT_RED or T.BORDER_DIM})
+                tw(sBtnStroke,{Color=v and T.BORDER_LIT or T.BORDER_DIM})
+                sBtn.Text       = v and "◈ ON" or "◇ OFF"
+                sBtn.TextColor3 = v and T.TEXT_GOLD or T.TEXT_DIM
+                if flag then LoRUI.Flags[flag]=LoRUI.Flags[flag] or {}; LoRUI.Flags[flag].Value=v end
+                if not silent and cb then safePcall(cb,v) end
+            end
+
+            -- single clickable overlay — no redundant connection on sBtn
+            local rb = new("TextButton", {
+                Size=UDim2.new(1,0,1,0), BackgroundTransparency=1, Text="", ZIndex=15,
+            }, row)
+            rb.MouseButton1Click:Connect(function() setState(not val) end)
+            row.MouseEnter:Connect(function() tw(row,{BackgroundColor3=T.BG4}) end)
+            row.MouseLeave:Connect(function() tw(row,{BackgroundColor3=T.BG3}) end)
+
+            if flag then LoRUI.Flags[flag]={Value=val, Set=function(_,v) setState(v) end} end
+            function Toggle:Set(v) setState(v) end
+            return Toggle
+        end
+        Tab.AddToggle = Tab.CreateToggle
+
+        -- SLIDER
+        function Tab:CreateSlider(cfg)
+            local mn   = (cfg.Range and cfg.Range[1]) or cfg.Min or 0
+            local mx   = (cfg.Range and cfg.Range[2]) or cfg.Max or 100
+            local inc  = cfg.Increment or 1
+            local val  = {cfg.CurrentValue or cfg.Default or mn}  -- boxed so global handler can write
+            local suf  = cfg.Suffix or ""
+            local flag = cfg.Flag
+            local cb   = cfg.Callback
+            local row  = makeRow(EList, o(), 48)
+
+            new("TextLabel", {
+                Size=UDim2.new(0.58,-14,0,22), Position=UDim2.new(0,10,0,2),
+                BackgroundTransparency=1, Text=cfg.Name or "",
+                TextColor3=T.TEXT, Font=Enum.Font.Gotham, TextSize=11,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
+            }, row)
+
+            local valLbl = new("TextLabel", {
+                Size=UDim2.new(0.42,-8,0,22), Position=UDim2.new(0.58,0,0,2),
+                BackgroundTransparency=1, Text=tostring(val[1])..suf,
+                TextColor3=T.TEXT_GOLD, Font=Enum.Font.GothamBold, TextSize=11,
+                TextXAlignment=Enum.TextXAlignment.Right, ZIndex=13,
+            }, row)
+
+            local track = new("Frame", {
+                Size=UDim2.new(1,-20,0,2), Position=UDim2.new(0,10,0,36),
+                BackgroundColor3=T.DIVIDER, BorderSizePixel=0, ZIndex=13,
+            }, row)
+
+            local fp0 = (val[1]-mn)/(mx-mn)
+            local fill = new("Frame", {
+                Size=UDim2.new(fp0,0,1,0),
+                BackgroundColor3=T.ACCENT, BorderSizePixel=0, ZIndex=14,
+            }, track)
+
+            local handle = new("Frame", {
+                Size=UDim2.new(0,8,0,14), AnchorPoint=Vector2.new(0.5,0.5),
+                Position=UDim2.new(fp0,0,0.5,0),
+                BackgroundColor3=T.TEXT, BorderSizePixel=0, ZIndex=15,
+            }, track)
+            stroke(handle, T.BORDER, 1)
+
+            -- uses global activeSlider — no per-slider UIS connections
+            track.InputBegan:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                    activeSlider = {
+                        track=track, fill=fill, handle=handle,
+                        min=mn, max=mx, inc=inc, suf=suf,
+                        val=val, valLbl=valLbl, flag=flag, cb=cb,
+                    }
+                    -- immediate update on click
+                    local p  = math.clamp((inp.Position.X-track.AbsolutePosition.X)/track.AbsoluteSize.X,0,1)
+                    local raw = mn + (mx-mn)*p
+                    local v  = math.clamp(math.floor(raw/inc+0.5)*inc, mn, mx)
+                    v = math.floor(v*100000+0.5)/100000
+                    val[1]=v
+                    local fp=(v-mn)/(mx-mn)
+                    fill.Size=UDim2.new(fp,0,1,0)
+                    handle.Position=UDim2.new(fp,0,0.5,0)
+                    valLbl.Text=tostring(v)..suf
+                    if flag then LoRUI.Flags[flag]=LoRUI.Flags[flag] or {}; LoRUI.Flags[flag].Value=v end
+                    if cb then safePcall(cb,v) end
+                end
+            end)
+
+            if flag then LoRUI.Flags[flag]={Value=val[1]} end
+        end
+        Tab.AddSlider = Tab.CreateSlider
+
+        -- DROPDOWN
+        function Tab:CreateDropdown(cfg)
+            local opts   = cfg.Options or {}
+            local multi  = cfg.MultipleOptions or false
+            local curr   = cfg.CurrentOption
+            if type(curr)=="table" then curr=curr[1] end
+            curr = curr or opts[1] or ""
+            local selected = {}
+            local flag   = cfg.Flag
+            local cb     = cfg.Callback
+            local isOpen = false
+
+            local Wrap = new("Frame", {
+                Size=UDim2.new(1,0,0,32), BackgroundTransparency=1,
+                LayoutOrder=o(), ClipsDescendants=false, ZIndex=15,
+            }, EList)
+
+            local row = new("Frame", {
+                Size=UDim2.new(1,0,0,32), BackgroundColor3=T.BG3,
+                BorderSizePixel=0, ZIndex=15,
+            }, Wrap)
+            stroke(row, T.BORDER_DIM, 1)
+            clipCorners(row, 5)
+            new("Frame", {Size=UDim2.new(0,3,1,0), BackgroundColor3=T.BORDER, BorderSizePixel=0, ZIndex=16}, row)
+
+            new("TextLabel", {
+                Size=UDim2.new(0.44,-14,1,0), Position=UDim2.new(0,10,0,0),
+                BackgroundTransparency=1, Text=cfg.Name or "",
+                TextColor3=T.TEXT, Font=Enum.Font.Gotham, TextSize=11,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=16,
+            }, row)
+
+            local cBtn = new("TextButton", {
+                Size=UDim2.new(0.56,-8,0,22), Position=UDim2.new(0.44,0,0.5,-11),
+                BackgroundColor3=T.BG2, BorderSizePixel=0,
+                Text=tostring(curr).."  ▾",
+                TextColor3=T.TEXT_GOLD, Font=Enum.Font.GothamBold, TextSize=10,
+                AutoButtonColor=false, ZIndex=17, ClipsDescendants=true,
+            }, row)
+            stroke(cBtn, T.BORDER_DIM, 1)
+
+            local listH = math.min(#opts,6)*26+4
+            local drop = new("Frame", {
+                Size=UDim2.new(0.56,-8,0,listH), Position=UDim2.new(0.44,0,1,2),
+                BackgroundColor3=T.BG2, BorderSizePixel=0,
+                Visible=false, ZIndex=25, ClipsDescendants=true,
+            }, Wrap)
+            stroke(drop, T.BORDER_LIT, 1)
+            clipCorners(drop, 5)
+
+            local ds = new("ScrollingFrame", {
+                Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+                BorderSizePixel=0, ScrollBarThickness=2,
+                ScrollBarImageColor3=T.ACCENT,
+                CanvasSize=UDim2.new(0,0,0,#opts*26+4), ZIndex=25,
+            }, drop)
+            local dl = new("Frame", {
+                Size=UDim2.new(1,0,1,0), BackgroundTransparency=1, ZIndex=25,
+            }, ds)
+            listLayout(dl, 0)
+            pad(dl, 2, 0, 2, 0)
+
+            local optBtns = {}
+            local function close()
+                isOpen=false; drop.Visible=false; Wrap.Size=UDim2.new(1,0,0,32)
+            end
+
+            for _, opt in ipairs(opts) do
+                local isSel = (opt==curr)
+                local ob = new("TextButton", {
+                    Size=UDim2.new(1,0,0,26), BackgroundColor3=isSel and T.BG4 or T.BG2,
+                    BorderSizePixel=0,
+                    Text=(isSel and "◈ " or "  ")..tostring(opt),
+                    TextColor3=isSel and T.TEXT_GOLD or T.TEXT_DIM,
+                    Font=Enum.Font.Gotham, TextSize=10,
+                    TextXAlignment=Enum.TextXAlignment.Left,
+                    AutoButtonColor=false, ZIndex=26,
+                }, dl)
+                pad(ob,0,0,0,8)
+                optBtns[opt] = ob
+
+                ob.MouseEnter:Connect(function() tw(ob,{BackgroundColor3=T.BG4}) end)
+                ob.MouseLeave:Connect(function()
+                    tw(ob,{BackgroundColor3=(multi and selected[opt] or opt==curr) and T.BG4 or T.BG2})
+                end)
+                ob.MouseButton1Click:Connect(function()
+                    if multi then
+                        selected[opt]=not selected[opt]
+                        ob.Text=(selected[opt] and "◈ " or "  ")..tostring(opt)
+                        ob.TextColor3=selected[opt] and T.TEXT_GOLD or T.TEXT_DIM
+                        tw(ob,{BackgroundColor3=selected[opt] and T.BG4 or T.BG2})
+                        local sel={}; for o2,v in pairs(selected) do if v then sel[#sel+1]=o2 end end
+                        cBtn.Text=(#sel>0 and table.concat(sel,", ") or "None").."  ▾"
+                        if flag then LoRUI.Flags[flag]={Value=sel} end
+                        if cb then safePcall(cb,sel) end
+                    else
+                        if optBtns[curr] then
+                            optBtns[curr].Text="  "..tostring(curr)
+                            optBtns[curr].TextColor3=T.TEXT_DIM
+                            tw(optBtns[curr],{BackgroundColor3=T.BG2})
+                        end
+                        curr=opt
+                        ob.Text="◈ "..tostring(opt); ob.TextColor3=T.TEXT_GOLD
+                        tw(ob,{BackgroundColor3=T.BG4})
+                        cBtn.Text=tostring(opt).."  ▾"
+                        if flag then LoRUI.Flags[flag]={Value=opt} end
+                        if cb then safePcall(cb,opt) end
+                        close()
+                    end
+                end)
+            end
+
+            cBtn.MouseButton1Click:Connect(function()
+                isOpen=not isOpen; drop.Visible=isOpen
+                Wrap.Size=isOpen and UDim2.new(1,0,0,32+listH+4) or UDim2.new(1,0,0,32)
+            end)
+
+            if flag then LoRUI.Flags[flag]={Value=curr} end
+            local DD={}
+            function DD:Set(v)
+                if optBtns[curr] then optBtns[curr].Text="  "..tostring(curr); optBtns[curr].TextColor3=T.TEXT_DIM; tw(optBtns[curr],{BackgroundColor3=T.BG2}) end
+                curr=v
+                if optBtns[v] then optBtns[v].Text="◈ "..tostring(v); optBtns[v].TextColor3=T.TEXT_GOLD; tw(optBtns[v],{BackgroundColor3=T.BG4}) end
+                cBtn.Text=tostring(v).."  ▾"
+                if flag then LoRUI.Flags[flag]={Value=v} end
+                if cb then safePcall(cb,v) end
+            end
+            function DD:Refresh(newOpts)
+                for _,b in pairs(optBtns) do b:Destroy() end
+                optBtns={}; opts=newOpts
+                ds.CanvasSize=UDim2.new(0,0,0,#newOpts*26+4)
+            end
+            return DD
+        end
+        Tab.AddDropdown = Tab.CreateDropdown
+
+        -- BUTTON
+        function Tab:CreateButton(cfg)
+            local cb  = cfg.Callback
+            local btn = new("TextButton", {
+                Size=UDim2.new(1,0,0,32), BackgroundColor3=T.BG3,
+                BorderSizePixel=0, Text="", AutoButtonColor=false,
+                LayoutOrder=o(), ZIndex=12,
+            }, EList)
+            stroke(btn, T.BORDER_DIM, 1)
+            clipCorners(btn, 5)
+            new("Frame", {Size=UDim2.new(0,3,1,0), BackgroundColor3=T.BORDER, BorderSizePixel=0, ZIndex=13}, btn)
+
+            local lbl = new("TextLabel", {
+                Size=UDim2.new(1,-24,1,0), Position=UDim2.new(0,10,0,0),
+                BackgroundTransparency=1, Text=cfg.Name or "",
+                TextColor3=T.TEXT, Font=Enum.Font.Gotham, TextSize=11,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
+            }, btn)
+            new("TextLabel", {
+                Size=UDim2.new(0,18,1,0), Position=UDim2.new(1,-20,0,0),
+                BackgroundTransparency=1, Text="›", TextColor3=T.TEXT_GOLD,
+                Font=Enum.Font.GothamBold, TextSize=16, ZIndex=13,
+            }, btn)
+
+            btn.MouseEnter:Connect(function() tw(btn,{BackgroundColor3=T.BG4}); lbl.TextColor3=T.TEXT_GOLD end)
+            btn.MouseLeave:Connect(function() tw(btn,{BackgroundColor3=T.BG3}); lbl.TextColor3=T.TEXT    end)
+            btn.MouseButton1Click:Connect(function()
+                tw(btn,{BackgroundColor3=Color3.fromRGB(50,38,22)})
+                task.wait(0.12)
+                tw(btn,{BackgroundColor3=T.BG3})
+                if cb then task.spawn(cb) end
+            end)
+        end
+        Tab.AddButton = Tab.CreateButton
+
+        -- KEYBIND
+        -- single global UIS.InputBegan handles all keybinds via a registry
+        local keybindRegistry = {}
+        UIS.InputBegan:Connect(function(inp, gp)
+            if gp then return end
+            local entry = keybindRegistry[inp.KeyCode.Name]
+            if entry and not entry.hold then safePcall(entry.cb) end
+        end)
+
+        function Tab:CreateKeybind(cfg)
+            local key     = cfg.CurrentKeybind or cfg.Default or "NONE"
+            local hold    = cfg.HoldToInteract or false
+            local flag    = cfg.Flag
+            local cb      = cfg.Callback
+            local waiting = false
+            local row     = makeRow(EList, o(), 32)
+
+            new("TextLabel", {
+                Size=UDim2.new(0.52,-14,1,0), Position=UDim2.new(0,10,0,0),
+                BackgroundTransparency=1, Text=cfg.Name or "",
+                TextColor3=T.TEXT, Font=Enum.Font.Gotham, TextSize=11,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
+            }, row)
+
+            local kBtn = new("TextButton", {
+                Size=UDim2.new(0.48,-8,0,22), Position=UDim2.new(0.52,0,0.5,-11),
+                BackgroundColor3=T.BG2, BorderSizePixel=0,
+                Text="[ "..key.." ]", TextColor3=T.TEXT_GOLD,
+                Font=Enum.Font.GothamBold, TextSize=9, TextTracking=2,
+                AutoButtonColor=false, ZIndex=14,
+            }, row)
+            stroke(kBtn, T.BORDER_DIM, 1)
+
+            if cb then keybindRegistry[key] = {cb=cb, hold=hold} end
+
+            kBtn.MouseButton1Click:Connect(function()
+                waiting=true; kBtn.Text="[ ··· ]"; kBtn.TextColor3=T.TEXT_DIM
+                -- remove old registry entry
+                if keybindRegistry[key] then keybindRegistry[key]=nil end
+                local conn
+                conn = UIS.InputBegan:Connect(function(inp, gp)
+                    if gp or not waiting then return end
+                    waiting=false; conn:Disconnect()
+                    key=inp.KeyCode.Name
+                    kBtn.Text="[ "..key.." ]"; kBtn.TextColor3=T.TEXT_GOLD
+                    if flag then LoRUI.Flags[flag]={Value=key} end
+                    if cb then keybindRegistry[key]={cb=cb,hold=hold} end
+                end)
+            end)
+
+            if flag then LoRUI.Flags[flag]={Value=key} end
+        end
+        Tab.AddBind = Tab.CreateKeybind
+
+        -- INPUT
+        function Tab:CreateInput(cfg)
+            local cb  = cfg.Callback
+            local row = makeRow(EList, o(), 32)
+
+            new("TextLabel", {
+                Size=UDim2.new(0.34,-14,1,0), Position=UDim2.new(0,10,0,0),
+                BackgroundTransparency=1, Text=cfg.Name or "",
+                TextColor3=T.TEXT, Font=Enum.Font.Gotham, TextSize=11,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
+            }, row)
+
+            local box = new("TextBox", {
+                Size=UDim2.new(0.66,-8,0,22), Position=UDim2.new(0.34,0,0.5,-11),
+                BackgroundColor3=T.BG, BorderSizePixel=0,
+                PlaceholderText=cfg.PlaceholderText or "...",
+                PlaceholderColor3=T.TEXT_DIM, Text="",
+                TextColor3=T.TEXT, Font=Enum.Font.Gotham, TextSize=10,
+                ClearTextOnFocus=false, ZIndex=14,
+            }, row)
+            local boxStroke = stroke(box, T.BORDER_DIM, 1)
+            pad(box, 3, 6, 3, 6)
+
+            box.Focused:Connect(function()    tw(boxStroke,{Color=T.BORDER_LIT}) end)
+            box.FocusLost:Connect(function()
+                tw(boxStroke,{Color=T.BORDER_DIM})
+                if cb then safePcall(cb, box.Text) end
+                if cfg.RemoveTextAfterFocusLost then box.Text="" end
+            end)
+        end
+        Tab.AddTextbox = Tab.CreateInput
+
+        -- COLORPICKER
+        function Tab:CreateColorpicker(cfg)
+            local val    = cfg.Default or Color3.fromRGB(160,95,40)
+            local flag   = cfg.Flag
+            local cb     = cfg.Callback
+            local isOpen = false
+            local r2,g2,b2 = val.R*255, val.G*255, val.B*255
+
+            local Wrap = new("Frame", {
+                Size=UDim2.new(1,0,0,32), BackgroundTransparency=1,
+                LayoutOrder=o(), ClipsDescendants=false, ZIndex=12,
+            }, EList)
+
+            local row = new("Frame", {
+                Size=UDim2.new(1,0,0,32), BackgroundColor3=T.BG3,
+                BorderSizePixel=0, ZIndex=12,
+            }, Wrap)
+            stroke(row, T.BORDER_DIM, 1)
+            clipCorners(row, 5)
+            new("Frame", {Size=UDim2.new(0,3,1,0), BackgroundColor3=T.BORDER, BorderSizePixel=0, ZIndex=13}, row)
+
+            new("TextLabel", {
+                Size=UDim2.new(0.58,-14,1,0), Position=UDim2.new(0,10,0,0),
+                BackgroundTransparency=1, Text=cfg.Name or "",
+                TextColor3=T.TEXT, Font=Enum.Font.Gotham, TextSize=11,
+                TextXAlignment=Enum.TextXAlignment.Left, ZIndex=13,
+            }, row)
+
+            local preview = new("TextButton", {
+                Size=UDim2.new(0,46,0,22), Position=UDim2.new(1,-52,0.5,-11),
+                BackgroundColor3=val, BorderSizePixel=0, Text="",
+                AutoButtonColor=false, ZIndex=14,
+            }, row)
+            stroke(preview, T.BORDER, 1)
+            clipCorners(preview, 3)
+
+            local panel = new("Frame", {
+                Size=UDim2.new(1,0,0,100), Position=UDim2.new(0,0,1,2),
+                BackgroundColor3=T.BG2, BorderSizePixel=0, Visible=false, ZIndex=18,
+            }, row)
+            stroke(panel, T.BORDER_LIT, 1)
+
+            local function updateColor()
+                val=Color3.fromRGB(r2,g2,b2)
+                preview.BackgroundColor3=val
+                if flag then LoRUI.Flags[flag]={Value=val} end
+                if cb then safePcall(cb,val) end
+            end
+
+            -- uses global activeCP — no per-channel UIS connections
+            local function makeRGBSlider(label, yPos, dVal, onCh)
+                new("TextLabel", {
+                    Size=UDim2.new(0,10,0,12), Position=UDim2.new(0,8,0,yPos+2),
+                    BackgroundTransparency=1, Text=label, TextColor3=T.TEXT_GOLD,
+                    Font=Enum.Font.GothamBold, TextSize=8, ZIndex=19,
+                }, panel)
+                local tr = new("Frame", {
+                    Size=UDim2.new(1,-30,0,2), Position=UDim2.new(0,22,0,yPos+6),
+                    BackgroundColor3=T.DIVIDER, BorderSizePixel=0, ZIndex=19,
+                }, panel)
+                local fl = new("Frame", {
+                    Size=UDim2.new(dVal/255,0,1,0),
+                    BackgroundColor3=T.ACCENT, BorderSizePixel=0, ZIndex=20,
+                }, tr)
+                local hd = new("Frame", {
+                    Size=UDim2.new(0,6,0,10), AnchorPoint=Vector2.new(0.5,0.5),
+                    Position=UDim2.new(dVal/255,0,0.5,0),
+                    BackgroundColor3=T.TEXT, BorderSizePixel=0, ZIndex=21,
+                }, tr)
+
+                tr.InputBegan:Connect(function(inp)
+                    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                        activeCP = {track=tr, fill=fl, handle=hd, onChange=onCh}
+                        local p=math.clamp((inp.Position.X-tr.AbsolutePosition.X)/tr.AbsoluteSize.X,0,1)
+                        fl.Size=UDim2.new(p,0,1,0); hd.Position=UDim2.new(p,0,0.5,0)
+                        onCh(math.floor(p*255))
+                    end
+                end)
+            end
+
+            makeRGBSlider("R", 6,  r2, function(v) r2=v; updateColor() end)
+            makeRGBSlider("G", 36, g2, function(v) g2=v; updateColor() end)
+            makeRGBSlider("B", 66, b2, function(v) b2=v; updateColor() end)
+
+            preview.MouseButton1Click:Connect(function()
+                isOpen=not isOpen; panel.Visible=isOpen
+                Wrap.Size=isOpen and UDim2.new(1,0,0,134) or UDim2.new(1,0,0,32)
+            end)
+
+            if flag then LoRUI.Flags[flag]={Value=val} end
+        end
+        Tab.AddColorpicker = Tab.CreateColorpicker
+
+        return Tab
+    end
+
+    -- ══════════════════════════════════════════
+    -- CREATE TAB
+    -- ══════════════════════════════════════════
+    local function makeTab(name)
+        tabCount = tabCount + 1
+        local idx = tabCount
+
+        local tBtn = new("TextButton", {
+            Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+            BackgroundColor3=T.BG_TAB, BorderSizePixel=0,
+            Text="", AutoButtonColor=false, LayoutOrder=idx, ZIndex=12,
+        }, TabBarList)
+        stroke(tBtn, T.BORDER_DIM, 1)
+
+        local tLbl = new("TextLabel", {
+            Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+            BackgroundTransparency=1, Text=string.upper(name),
+            TextColor3=T.TEXT_DIM, Font=Enum.Font.GothamBold,
+            TextSize=9, TextTracking=3, ZIndex=13,
+        }, tBtn)
+        pad(tLbl, 0, 10, 0, 10)
+
+        local tLine = new("Frame", {
+            Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2),
+            BackgroundColor3=T.ACCENT, BorderSizePixel=0,
+            Visible=false, ZIndex=14,
+        }, tBtn)
+
+        local tFrame = new("ScrollingFrame", {
+            Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+            BorderSizePixel=0, ScrollBarThickness=2,
+            ScrollBarImageColor3=T.ACCENT,
+            CanvasSize=UDim2.new(0,0,0,0),
+            AutomaticCanvasSize=Enum.AutomaticSize.Y,
+            Visible=false, ZIndex=11,
+        }, ContentBG)
+
+        local EList = new("Frame", {
+            Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+            AutomaticSize=Enum.AutomaticSize.Y, ZIndex=11,
+        }, tFrame)
+        listLayout(EList, 3)
+        pad(EList, 8, 8, 10, 8)
+
+        local function activate()
+            if activeTab then
+                activeTab.frame.Visible=false
+                tw(activeTab.btn,{BackgroundColor3=T.BG_TAB})
+                activeTab.line.Visible=false
+                activeTab.lbl.TextColor3=T.TEXT_DIM
+            end
+            tFrame.Visible=true; tLine.Visible=true
+            tLbl.TextColor3=T.TEXT_GOLD
+            tw(tBtn,{BackgroundColor3=T.BG_TAB_ACT})
+            activeTab={frame=tFrame, btn=tBtn, line=tLine, lbl=tLbl}
+        end
+
+        tBtn.MouseButton1Click:Connect(activate)
+        tBtn.MouseEnter:Connect(function()
+            if not activeTab or activeTab.frame~=tFrame then tw(tBtn,{BackgroundColor3=T.BG3}) end
+        end)
+        tBtn.MouseLeave:Connect(function()
+            if not activeTab or activeTab.frame~=tFrame then tw(tBtn,{BackgroundColor3=T.BG_TAB}) end
+        end)
+
+        if idx==1 then activate() end
+
+        return buildElements(EList)
+    end
+
+    function Window:CreateTab(name, _) return makeTab(name) end
+    function Window:MakeTab(cfg)       return makeTab(cfg.Name or "Tab") end
+
+    -- config
+    function Window:LoadConfiguration()
+        if not saveOn then return end
+        local data = readCfg(cfgName); if not data then return end
+        for flag, entry in pairs(data) do
+            if LoRUI.Flags[flag] then
+                if LoRUI.Flags[flag].Set then LoRUI.Flags[flag]:Set(entry.Value)
+                else LoRUI.Flags[flag].Value=entry.Value end
+            end
+        end
+    end
+
+    function Window:SaveConfiguration()
+        if not saveOn then return end
+        local data={}
+        for flag, entry in pairs(LoRUI.Flags) do data[flag]={Value=entry.Value} end
+        writeCfg(cfgName, data)
+    end
+
+    function Window:Notify(cfg) makeNotif(cfg) end
+    function Window:Destroy()   gui:Destroy()  end
+
+    -- intro
+    tw(Main, {Size=UDim2.new(0,W_WIDTH,0,W_HEIGHT)},
+        TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out))
+
+    return Window
+end
+
+return LoRUI
