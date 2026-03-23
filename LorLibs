@@ -323,7 +323,7 @@ function LoRUI:CreateWindow(cfg)
     -- ── MAIN ────────────────────────────────────
     local Main = new("Frame", {
         Name             = "LoRUI_Main",
-        Size             = UDim2.new(0, W_WIDTH, 0, 0),
+        Size             = UDim2.new(0, W_WIDTH, 0, W_HEIGHT),
         Position         = UDim2.new(0.5,-W_WIDTH/2, 0.5,-W_HEIGHT/2),
         BackgroundColor3 = T.BG,
         BorderSizePixel  = 0,
@@ -1115,10 +1115,6 @@ function LoRUI:CreateWindow(cfg)
 
     function Window:Notify(cfg) makeNotif(cfg) end
     function Window:Destroy()   gui:Destroy()  end
-
-    -- intro
-    tw(Main, {Size=UDim2.new(0,W_WIDTH,0,W_HEIGHT)},
-        TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out))
 
     return Window
 end
