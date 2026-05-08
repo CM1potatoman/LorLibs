@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>School Registration</title>
+  <link rel="stylesheet" href="school.css">
+</head>
+<body>
+
+  <div class="header">
+    <h1>STI Cubao College</h1>
+    <p>Enrollment Registration</p>
+  </div>
+
+  <div class="hero">
+    <h2>Welcome, Future STIan!</h2>
+    <p>Fill out the form below to register.</p>
+  </div>
+
+  <div class="form-container">
+    <form>
+
+      <label>Full Name:</label>
+      <input type="text" name="name">
+
+      <label>Email:</label>
+      <input type="email" name="email">
+
+      <label>Phone:</label>
+      <input type="tel" name="phone">
+
+      <label>Date of Birth:</label>
+      <input type="date" name="dob">
+
+      <label>Address:</label>
+      <input type="text" name="address">
+
+      <label>Gender:</label>
+      <input type="radio" name="gender" value="male"> Male
+      <input type="radio" name="gender" value="female"> Female
+
+      <label>Year Level:</label>
+      <select name="year">
+        <option>Grade 11</option>
+        <option>Grade 12</option>
+        <option>1st Year College</option>
+        <option>2nd Year College</option>
+      </select>
+
+      <label>Course/Strand:</label>
+      <select name="course">
+        <option>IT</option>
+        <option>Business</option>
+        <option>Criminology</option>
+        <option>Education</option>
+      </select>
+
+      <button type="submit">Register</button>
+
+    </form>
+  </div>
+
+  <div class="footer">
+    <p>STI Cubao | 123 Sample St, Cubao, QC</p>
+    <p>Contact: (02) 123-4567</p>
+  </div>
+
+</body>
+</html>
